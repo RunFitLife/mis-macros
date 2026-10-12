@@ -147,6 +147,7 @@ textarea[hidden] { display: none; }
 .sup-l { display: flex; gap: 10px; align-items: center; }
 .sw-t { display: flex; gap: 8px; align-items: flex-start; }
 .sw-t .ico { color: var(--fib); margin-top: 2px; }
+.notes { margin: 8px 0 8px; padding-left: 18px; }
 .sub { font-family: var(--font-head); font-weight: 600; font-size: 20px; margin: 18px 0 6px; }
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .filebtn:focus-within { outline: 3px solid var(--prot); outline-offset: 2px; }
@@ -219,6 +220,7 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
     shaker: '<path d="M7 9h10l-1 11a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1L7 9z"/><path d="M6 9h12M9 5h6v4H9z"/><path d="M9.5 14h5"/>',
     capsule: '<g transform="rotate(-40 12 12)"><rect x="3" y="8.5" width="18" height="7" rx="3.5"/><path d="M12 8.5v7"/></g>',
     target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+    camera: '<path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
     download: '<path d="M12 4v11M7.5 11L12 15.5 16.5 11M5 20h14"/>',
     upload: '<path d="M12 16V5M7.5 9L12 4.5 16.5 9M5 20h14"/>',
     shield: '<path d="M12 3l8 3v6c0 4.5-3.2 7.7-8 9-4.8-1.3-8-4.5-8-9V6l8-3z"/>',
@@ -355,6 +357,15 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
     vc: 'naranja, fresas, brócoli o tomate'
   };
 
+  var TYPES = [
+    ['', 'Sin medidas caseras'], ['liq', 'Líquido (leche, zumo, bebida)'], ['cremoso', 'Cremoso (yogur, queso fresco, salsa)'],
+    ['grano', 'Arroz o pasta cocidos'], ['legumbre', 'Legumbres cocidas'], ['tuberculo', 'Patata o boniato cocidos'],
+    ['verdura', 'Verduras'], ['fruta', 'Fruta troceada'], ['cereal', 'Cereales o copos secos']
+  ];
+  function typeOptions(sel) {
+    return TYPES.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === (sel || '') ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('');
+  }
+
   /* ---------- Estado ---------- */
   var S = null;
   function defaultSupps() {
@@ -393,18 +404,74 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
   /* ---------- Cálculos ---------- */
   function targets(p) {
     if (!p) return null;
-    var bmr = 10 * p.weight + 6.25 * p.height - 5 * p.age + (p.sex === 'm' ? 5 : -161);
+    var notes = [];
+    var hm = p.height / 100, h2 = hm * hm, bmi = p.weight / h2;
+    var bf = (p.bf >= 5 && p.bf <= 60) ? p.bf : null;
+
+    /* 1. Metabolismo basal: Katch-McArdle si se conoce la grasa corporal, si no Mifflin-St Jeor */
+    var bmr, method;
+    if (bf !== null) { bmr = 370 + 21.6 * (p.weight * (1 - bf / 100)); method = 'Katch-McArdle'; }
+    else { bmr = 10 * p.weight + 6.25 * p.height - 5 * p.age + (p.sex === 'm' ? 5 : -161); method = 'Mifflin-St Jeor'; }
     var tdee = bmr * ACT[p.activity].f;
-    var k = tdee * { lose: 0.85, keep: 1, gain: 1.10 }[p.goal];
-    k = Math.max(k, p.sex === 'm' ? 1500 : 1200);
-    var prot = p.weight * { lose: 2.0, keep: 1.6, gain: 1.8 }[p.goal];
-    var fat = k * 0.25 / 9;
-    var carb = Math.max(0, (k - prot * 4 - fat * 9) / 4);
+
+    /* 2. Objetivo ajustado al IMC (más seguro) */
+    var goal = p.goal;
+    if (goal === 'lose' && bmi < 20) {
+      goal = 'keep';
+      notes.push('Con tu IMC (' + nf(bmi, 1) + ') no es recomendable perder peso, así que los objetivos se calculan para mantener.');
+    }
+    if (goal === 'gain' && bmi >= 30) notes.push('Con tu IMC lo más sano es una recomposición: calorías de mantenimiento y entrenamiento de fuerza.');
+    if (bmi < 18.5) notes.push('Tu IMC es bajo. Si no es tu peso habitual, consúltalo con un profesional de la salud.');
+    var pct = 0;
+    if (goal === 'lose') pct = -(bmi >= 27 ? 0.20 : 0.15);
+    else if (goal === 'gain') pct = bmi < 25 ? 0.10 : (bmi < 30 ? 0.05 : 0);
+    var k = tdee * (1 + pct);
+
+    /* 3. Límites de seguridad: ritmo máximo, no bajar del basal y mínimos absolutos */
+    if (pct < 0) {
+      var maxDef = 8.25 * p.weight; /* aprox. 0,75 % del peso por semana */
+      if (tdee - k > maxDef) { k = tdee - maxDef; notes.push('Déficit limitado para no perder más de un 0,75 % de tu peso por semana.'); }
+      if (k < bmr) { k = bmr; notes.push('Calorías ajustadas a tu metabolismo basal: no es sano comer menos que eso de forma sostenida.'); }
+    }
+    var floor = p.sex === 'm' ? 1500 : 1200;
+    if (k < floor) { k = floor; notes.push('Se ha aplicado el mínimo de seguridad de ' + floor + ' kcal.'); }
+
+    /* 4. Peso de referencia para proteína y grasa (evita cifras exageradas con sobrepeso) */
+    var ref = p.weight;
+    var lean = bf !== null && (p.sex === 'm' ? bf < 22 : bf < 32);
+    if (bmi > 25 && !lean) {
+      ref = 25 * h2 + 0.25 * (p.weight - 25 * h2);
+      notes.push('Proteína y grasas calculadas con un peso de referencia de ' + nf(ref) + ' kg.');
+    }
+
+    /* 5. Proteína: según actividad, objetivo y edad (entre 1,0 y 2,2 g/kg, máximo 35 % de las kcal) */
+    var base = { sed: 1.2, lig: 1.4, mod: 1.6, alto: 1.7, muy: 1.8 }[p.activity];
+    var pg = base + (goal === 'lose' ? 0.3 : (goal === 'gain' ? 0.2 : 0)) + (p.age >= 60 ? 0.2 : 0);
+    pg = Math.min(2.2, Math.max(1.0, pg));
+    var prot = Math.min(pg * ref, 0.35 * k / 4);
+
+    /* 6. Grasas: 25 % de las kcal y al menos 0,7 g/kg; carbohidratos: el resto, nunca por debajo de 100 g */
+    var fat = Math.min(Math.max(0.25 * k / 9, 0.7 * ref), 0.35 * k / 9);
+    var carb = (k - prot * 4 - fat * 9) / 4;
+    if (carb < 100) {
+      fat = Math.min(fat, Math.max(0.6 * ref, 0.2 * k / 9));
+      carb = (k - prot * 4 - fat * 9) / 4;
+    }
+    if (carb < 100) {
+      prot = Math.max(1.4 * ref, prot - (100 - carb));
+      carb = (k - prot * 4 - fat * 9) / 4;
+    }
+    carb = Math.max(0, carb);
+
+    var rate = (k - tdee) * 7 / 7700;
     return {
       k: Math.round(k), p: Math.round(prot), c: Math.round(carb), f: Math.round(fat),
-      fi: Math.max(25, Math.round(k / 1000 * 14)), ca: p.age > 50 ? 1200 : 1000,
+      fi: Math.min(45, Math.max(25, Math.round(k / 1000 * 14))),
+      ca: ((p.sex === 'f' && p.age > 50) || (p.sex === 'm' && p.age > 70)) ? 1200 : 1000,
       fe: (p.sex === 'f' && p.age < 51) ? 18 : 8, vc: p.sex === 'm' ? 90 : 75,
-      bmr: Math.round(bmr), tdee: Math.round(tdee)
+      bmr: Math.round(bmr), tdee: Math.round(tdee), method: method, bmi: bmi, goal: goal, rate: rate,
+      pkg: prot / ref, ref: ref, notes: notes,
+      sugar: Math.round(0.10 * k / 4), sugarIdeal: Math.round(0.05 * k / 4), water: p.sex === 'm' ? 2.0 : 1.6
     };
   }
   function totals(k) {
@@ -465,7 +532,7 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
     ];
     h += '<section class="card"><h2 class="hi">' + chip('bars', 'prot') + 'Macros</h2>' + M.slice(1, 4).map(laneHTML).join('') + '</section>';
     h += '<section class="card micro"><h2 class="hi">' + chip('leaf', 'fib') + 'Fibra y micronutrientes</h2>' + M.slice(4).map(laneHTML).join('') +
-      '<p class="muted small" style="margin-top:12px">Son valores aproximados y solo cuentan los alimentos que tienen esos datos.</p></section>';
+      '<p class="muted small" style="margin-top:12px">Son valores aproximados y solo cuentan los alimentos que tienen esos datos. Para vitaminas y minerales importa más el promedio de la semana que un solo día.</p></section>';
 
     var hasData = d.items.length || Object.keys(d.supps).some(function (id) { return d.supps[id] > 0; });
     if (hasData) {
@@ -531,17 +598,20 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
       '<p class="err" id="serr" role="alert"></p></section>';
     h += '<section class="card"><h2 class="hi">' + chip('search', 'carb') + '<label for="q">Buscar alimento</label></h2><input id="q" type="search" placeholder="Pollo, arroz, yogur" autocomplete="off"><div id="results"></div></section>';
     h += '<div id="picker"></div>';
-    h += '<details class="card"><summary class="hi">' + chip('pencil', 'fat') + 'Crear alimento propio</summary>' +
-      '<p class="muted small">Copia los datos de la etiqueta. Usa la columna "por 100 g" o "por 100 ml".</p>' +
-      '<div class="field"><label for="cn">Nombre</label><input id="cn" type="text" autocomplete="off"></div>' +
+    h += '<details class="card" id="customd"><summary class="hi">' + chip('pencil', 'fat') + 'Crear alimento propio</summary>' +
+      '<p class="muted small">Haz una foto a la etiqueta o copia sus datos. Usa siempre la columna "por 100 g" o "por 100 ml".</p>' +
+      '<label class="btn ghost filebtn" for="labelfile">' + ic('camera', 20) + '<span>Foto de la etiqueta</span><input class="vh" id="labelfile" type="file" accept="image/*"></label>' +
+      '<p class="muted small" id="ocrstatus" role="status" style="margin-top:8px"></p>' +
+      '<div class="field" style="margin-top:10px"><label for="cn">Nombre</label><input id="cn" type="text" autocomplete="off"></div>' +
       '<div class="row"><div class="field"><label for="ck">Calorías (kcal)</label><input id="ck" type="text" inputmode="decimal"></div>' +
       '<div class="field"><label for="cp">Proteína (g)</label><input id="cp" type="text" inputmode="decimal"></div>' +
       '<div class="field"><label for="cc">Carbohidratos (g)</label><input id="cc" type="text" inputmode="decimal"></div>' +
       '<div class="field"><label for="cf">Grasas (g)</label><input id="cf" type="text" inputmode="decimal"></div>' +
       '<div class="field"><label for="cfi">Fibra (g, opcional)</label><input id="cfi" type="text" inputmode="decimal"></div>' +
       '<div class="field"><label for="cl">Se mide en</label><select id="cl"><option value="g">gramos</option><option value="ml">mililitros</option></select></div></div>' +
+      '<div class="row"><div class="field"><label for="ctype">Tipo de alimento (para las medidas caseras)</label><select id="ctype">' + typeOptions('') + '</select></div>' +
+      '<div class="field"><label for="cserv">Ración de la etiqueta (g o ml, opcional)</label><input id="cserv" type="text" inputmode="decimal"></div></div>' +
       '<button class="btn" id="savecustom">Guardar alimento</button><p class="err" id="cerr" role="alert"></p></details>';
-    h += '<p class="muted small">La foto de la etiqueta llegará en una fase posterior.</p>';
     return h;
   }
 
@@ -568,7 +638,8 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
       (food.off ? '<p class="muted small">Datos de Open Food Facts. Compruébalos con la etiqueta de tu envase.</p>' : '') +
       '<div class="row"><div class="field"><label for="qty">Cantidad</label><input id="qty" type="text" inputmode="decimal" value="' + (hasU(food) ? 1 : 100) + '"></div>' +
       '<div class="field"><label for="unit">Unidad</label><select id="unit">' +
-      unitOptions(food) + (food.l && !hasU(food) ? '<option value="ml">mililitros</option>' : '') + '<option value="g">gramos</option>' + (food.l && hasU(food) ? '<option value="ml">mililitros</option>' : '') + '</select></div></div>' +
+      unitSelectHTML(food) + '</select></div></div>' +
+      ((food.custom || food.off) ? '<div class="field"><label for="ftype">Tipo de alimento (para las medidas caseras)</label><select id="ftype">' + typeOptions(food.cat) + '</select></div>' : '') +
       '<div class="field"><label for="meal">Comida</label><select id="meal">' + MEALS.map(function (m) { return '<option' + (m === dm ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select></div>' +
       '<p class="muted small" id="preview"></p><div class="btns"><button class="btn" id="addbtn">Añadir a ' + dayLabel(cur).toLowerCase() + '</button>' +
       (food.off ? '<button class="btn ghost" id="savescanned">Guardar en mis alimentos</button>' : '') +
@@ -589,6 +660,19 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
     return unitsOf(f).map(function (u, i) {
       return '<option value="u' + i + '">' + esc(u[0]) + ' (' + u[1] + (f.l ? ' ml' : ' g') + ')</option>';
     }).join('');
+  }
+  function unitSelectHTML(f) {
+    return unitOptions(f) + (f.l && !hasU(f) ? '<option value="ml">mililitros</option>' : '') + '<option value="g">gramos</option>' + (f.l && hasU(f) ? '<option value="ml">mililitros</option>' : '');
+  }
+  function setFoodType(v) {
+    if (!picked) return;
+    if (v) picked.cat = v; else delete picked.cat;
+    if (v === 'liq') picked.l = true;
+    var sel = $('#unit'), prev = sel.value;
+    sel.innerHTML = unitSelectHTML(picked);
+    if (!/^u\d+$/.test(prev)) sel.value = prev;
+    updPreview();
+    if (picked.custom && !picked.off) save();
   }
   function pickedGrams() {
     var qty = parseNum($('#qty').value);
@@ -619,11 +703,110 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
     var err = $('#cerr');
     if (!name) { err.textContent = 'Escribe el nombre del alimento.'; return; }
     if (nums.some(function (n) { return isNaN(n) || n < 0 || n > 900; })) { err.textContent = 'Revisa los números: deben ser valores por 100 g, entre 0 y 900.'; return; }
-    S.custom.push({ n: name, k: nums[0], p: nums[1], c: nums[2], f: nums[3], fi: nums[4], ca: 0, fe: 0, vc: 0, custom: true, l: $('#cl').value === 'ml' });
+    var sv = $('#cserv').value.trim(), serv = sv === '' ? 0 : parseNum(sv);
+    if (isNaN(serv) || serv < 0 || serv > 2000) { err.textContent = 'La ración debe ser un número entre 1 y 2000, o déjala vacía.'; return; }
+    var cat = $('#ctype').value;
+    var food = { n: name, k: nums[0], p: nums[1], c: nums[2], f: nums[3], fi: nums[4], ca: 0, fe: 0, vc: 0, custom: true, l: $('#cl').value === 'ml' || cat === 'liq' };
+    if (cat) food.cat = cat;
+    if (serv > 0) food.u = ['ración', serv];
+    S.custom.push(food);
     save(); toast('Alimento guardado');
-    ids.concat('cn').forEach(function (id) { $('#' + id).value = ''; });
+    ids.concat(['cn', 'cserv']).forEach(function (id) { $('#' + id).value = ''; });
+    $('#ctype').value = ''; $('#cl').value = 'g';
     err.textContent = '';
     renderResults($('#q').value);
+    showPicker(food);
+  }
+
+  /* ---------- Foto de la etiqueta (la lectura se hace en tu móvil) ---------- */
+  function openCustom() {
+    var d = $('#customd');
+    if (d) { d.open = true; try { d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* nada */ } }
+  }
+  function loadOcrLib(cb) {
+    if (window.Tesseract) return cb(true);
+    var sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    sc.onload = function () { cb(!!window.Tesseract); };
+    sc.onerror = function () { cb(false); };
+    document.head.appendChild(sc);
+  }
+  function prepImage(file, cb) {
+    var url = URL.createObjectURL(file), img = new Image();
+    img.onload = function () {
+      var sc = Math.min(2, 1800 / Math.max(img.width, img.height));
+      var w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+      var c = document.createElement('canvas'); c.width = w; c.height = h;
+      var x = c.getContext('2d'); x.drawImage(img, 0, 0, w, h);
+      try {
+        var d = x.getImageData(0, 0, w, h), a = d.data;
+        for (var i = 0; i < a.length; i += 4) {
+          var g = 0.299 * a[i] + 0.587 * a[i + 1] + 0.114 * a[i + 2];
+          g = (g - 128) * 1.4 + 128; g = g < 0 ? 0 : (g > 255 ? 255 : g);
+          a[i] = a[i + 1] = a[i + 2] = g;
+        }
+        x.putImageData(d, 0, 0);
+      } catch (e) { /* se usa la imagen sin retocar */ }
+      URL.revokeObjectURL(url); cb(c);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); cb(null); };
+    img.src = url;
+  }
+  function parseLabel(raw) {
+    var t = norm(raw).replace(/,/g, '.').replace(/[|]/g, ' ');
+    function first(re) { var m = t.match(re); return m ? parseFloat(m[1]) : null; }
+    var o = {};
+    o.k = first(/(\d+(?:\.\d+)?)\s*kcal/);
+    if (o.k === null) { var kj = first(/(\d+(?:\.\d+)?)\s*kj/); if (kj !== null) o.k = kj / 4.184; }
+    o.f = first(/(?:grasas?|lipidos)\D{0,25}?(\d+(?:\.\d+)?)\s*g/);
+    o.c = first(/(?:hidratos? de carbono|carbohidratos?|hidratos)\D{0,25}?(\d+(?:\.\d+)?)\s*g/);
+    o.p = first(/proteinas?\D{0,25}?(\d+(?:\.\d+)?)\s*g/);
+    o.fi = first(/fibra\D{0,30}?(\d+(?:\.\d+)?)\s*g/);
+    o.has100 = /100\s*(g|ml)\b/.test(t);
+    o.l = /100\s*ml\b/.test(t);
+    o.serv = first(/racion[^0-9]{0,25}(\d+(?:\.\d+)?)\s*(?:g|ml)\b/);
+    ['p', 'c', 'f', 'fi'].forEach(function (k) { if (o[k] !== null && (o[k] < 0 || o[k] > 100)) o[k] = null; });
+    if (o.k !== null && (o.k < 0 || o.k > 950)) o.k = null;
+    if (o.serv !== null && (o.serv <= 0 || o.serv > 2000)) o.serv = null;
+    return o;
+  }
+  function applyLabel(o) {
+    var st = $('#ocrstatus'); if (!st) return;
+    var miss = [], any = false;
+    function put(id, v, name, optional) {
+      if (v !== null && !isNaN(v)) { $('#' + id).value = String(Math.round(v * 10) / 10); any = true; }
+      else if (!optional) miss.push(name);
+    }
+    put('ck', o.k, 'calorías'); put('cp', o.p, 'proteína'); put('cc', o.c, 'carbohidratos'); put('cf', o.f, 'grasas'); put('cfi', o.fi, 'fibra', true);
+    if (!any) { st.textContent = 'No he podido leer los valores. Prueba con más luz, la tabla nutricional bien enfocada y sin reflejos, o escríbelos tú.'; return; }
+    if (o.l) $('#cl').value = 'ml';
+    if (o.serv !== null) $('#cserv').value = String(o.serv);
+    var msg = 'Datos leídos de la foto. Revisa cada número con la etiqueta antes de guardar.';
+    if (miss.length) msg += ' No he encontrado: ' + miss.join(', ') + '. Escríbelo tú.';
+    if (o.k !== null && o.p !== null && o.c !== null && o.f !== null) {
+      var est = 4 * o.p + 4 * o.c + 9 * o.f;
+      if (Math.abs(est - o.k) > 0.3 * Math.max(o.k, 50)) msg += ' Las calorías no cuadran con los macros: algún número puede estar mal leído.';
+    }
+    if (!o.has100) msg += ' No he visto "por 100 g": comprueba que los valores no sean por ración.';
+    st.textContent = msg;
+    var cn = $('#cn'); if (cn) cn.focus();
+  }
+  function runOcr(file) {
+    var st = $('#ocrstatus'); if (!st) return;
+    st.textContent = 'Cargando el lector de texto (la primera vez tarda un poco)...';
+    loadOcrLib(function (ok) {
+      if (!ok) { st.textContent = 'No se pudo cargar el lector. Revisa tu conexión a internet o escribe los datos a mano.'; return; }
+      prepImage(file, function (img) {
+        if (!img) { st.textContent = 'No he podido abrir esa imagen.'; return; }
+        window.Tesseract.recognize(img, 'spa', {
+          logger: function (m) {
+            if (m.status === 'recognizing text') st.textContent = 'Leyendo la etiqueta... ' + Math.round(m.progress * 100) + ' %';
+            else if (m.status && m.status.indexOf('loading') === 0) st.textContent = 'Descargando el idioma (solo la primera vez)...';
+          }
+        }).then(function (r) { applyLabel(parseLabel(r.data.text)); })
+          .catch(function () { st.textContent = 'No he podido leer la imagen. Prueba con más luz o escribe los datos a mano.'; });
+      });
+    });
   }
 
   /* ---------- Escaneo de código de barras ---------- */
@@ -698,11 +881,11 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
       .then(function (j) {
         clearTimeout(to);
         if (!j || j.status !== 1 || !j.product) {
-          box.innerHTML = ''; err.textContent = 'No encuentro ese producto en Open Food Facts. Puedes crearlo a mano más abajo con los datos de su etiqueta.'; return;
+          box.innerHTML = ''; err.textContent = 'No encuentro ese producto en Open Food Facts. Hazle una foto a la etiqueta o créalo a mano más abajo.'; openCustom(); return;
         }
         var food = offToFood(j.product, code);
         if (!food) {
-          box.innerHTML = ''; err.textContent = 'El producto existe, pero le faltan datos nutricionales. Créalo a mano más abajo con su etiqueta.'; return;
+          box.innerHTML = ''; err.textContent = 'El producto existe, pero le faltan datos nutricionales. Hazle una foto a la etiqueta o créalo a mano más abajo.'; openCustom(); return;
         }
         showPicker(food);
       })
@@ -786,9 +969,11 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
       '<div class="row"><div class="field"><label for="pf-sex">Sexo (para la fórmula de cálculo)</label><select id="pf-sex">' + opt('m', 'Hombre', p.sex === 'm') + opt('f', 'Mujer', p.sex === 'f') + '</select></div>' +
       '<div class="field"><label for="pf-age">Edad (años)</label><input id="pf-age" type="text" inputmode="numeric" value="' + (p.age || '') + '"></div>' +
       '<div class="field"><label for="pf-weight">Peso (kg)</label><input id="pf-weight" type="text" inputmode="decimal" value="' + (p.weight || '') + '"></div>' +
-      '<div class="field"><label for="pf-height">Altura (cm)</label><input id="pf-height" type="text" inputmode="numeric" value="' + (p.height || '') + '"></div></div>' +
-      '<div class="field"><label for="pf-act">Actividad física</label><select id="pf-act">' + Object.keys(ACT).map(function (k) { return opt(k, ACT[k].l, (p.activity || 'mod') === k); }).join('') + '</select></div>' +
+      '<div class="field"><label for="pf-height">Altura (cm)</label><input id="pf-height" type="text" inputmode="numeric" value="' + (p.height || '') + '"></div>' +
+      '<div class="field"><label for="pf-bf">Grasa corporal en % (opcional)</label><input id="pf-bf" type="text" inputmode="decimal" value="' + (p.bf || '') + '"></div></div>' +
+      '<div class="field"><label for="pf-act">Actividad física (incluye tu entrenamiento)</label><select id="pf-act">' + Object.keys(ACT).map(function (k) { return opt(k, ACT[k].l, (p.activity || 'mod') === k); }).join('') + '</select></div>' +
       '<div class="field"><label for="pf-goal">Objetivo</label><select id="pf-goal">' + Object.keys(GOALS).map(function (k) { return opt(k, GOALS[k], (p.goal || 'keep') === k); }).join('') + '</select></div>' +
+      '<p class="muted small">Rellena la grasa corporal solo si la has medido (báscula de bioimpedancia, plicómetro...): con ella el cálculo es más preciso, sobre todo si entrenas mucho. Estos cálculos no son para embarazo, lactancia, enfermedades como la diabetes o problemas renales, ni si has tenido un trastorno de la conducta alimentaria. En esos casos, consulta con un profesional.</p>' +
       '<button class="btn" type="submit">Guardar y calcular</button><p class="err" id="perr" role="alert"></p></form>';
     if (T) {
       h += '<section class="card"><h2 class="hi">' + chip('target', 'prot') + 'Tus objetivos diarios</h2><div class="goalgrid">' +
@@ -797,7 +982,10 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
         '<div class="goal"><b style="color:var(--carb)">' + nf(T.c) + ' g</b><span>carbohidratos</span></div>' +
         '<div class="goal"><b style="color:var(--fat)">' + nf(T.f) + ' g</b><span>grasas</span></div></div>' +
         '<p>Fibra ' + T.fi + ' g, calcio ' + nf(T.ca) + ' mg, hierro ' + T.fe + ' mg y vitamina C ' + T.vc + ' mg.</p>' +
-        '<p class="muted small">Cálculo: metabolismo basal con la fórmula Mifflin-St Jeor (' + nf(T.bmr) + ' kcal), multiplicado por tu actividad (' + nf(T.tdee) + ' kcal) y ajustado a tu objetivo. Son valores orientativos y no sustituyen la opinión de un dietista o un médico.</p>' +
+        '<p>Azúcares libres: menos de ' + T.sugar + ' g al día (lo ideal, menos de ' + T.sugarIdeal + ' g). Sal: menos de 5 g al día. Líquidos: al menos ' + nf(T.water, 1) + ' L al día, más si entrenas o hace calor.</p>' +
+        '<p>' + (Math.abs(T.rate) < 0.05 ? 'Objetivo: mantener tu peso.' : (T.rate < 0 ? 'Ritmo esperado: unos ' + nf(Math.abs(T.rate), 1) + ' kg menos por semana.' : 'Ritmo esperado: unos ' + nf(T.rate, 1) + ' kg más por semana, con ganancia lenta para limitar la grasa.')) + ' Proteína: ' + nf(T.pkg, 1) + ' g por kg de peso de referencia.</p>' +
+        (T.notes.length ? '<ul class="muted small notes">' + T.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
+        '<p class="muted small">Cálculo: metabolismo basal con la fórmula ' + T.method + ' (' + nf(T.bmr) + ' kcal), multiplicado por tu actividad (' + nf(T.tdee) + ' kcal) y ajustado a tu objetivo con límites de seguridad. Son valores orientativos: sigue tu peso durante 2 o 3 semanas y ajusta si el cambio no es el esperado. No sustituyen la opinión de un dietista o un médico.</p>' +
         '<button class="btn ghost" data-go="today">Ver mi día</button></section>';
     }
     h += '<section class="card"><h2 class="hi">' + chip('capsule', 'carb') + 'Mis suplementos</h2><p class="muted small">Edita los datos de una toma según la etiqueta de tu producto.</p>';
@@ -830,13 +1018,17 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
   function saveProfile() {
     var p = {
       sex: $('#pf-sex').value, age: parseNum($('#pf-age').value), weight: parseNum($('#pf-weight').value),
-      height: parseNum($('#pf-height').value), activity: $('#pf-act').value, goal: $('#pf-goal').value
+      height: parseNum($('#pf-height').value), activity: $('#pf-act').value, goal: $('#pf-goal').value,
+      bf: $('#pf-bf').value.trim() === '' ? null : parseNum($('#pf-bf').value)
     };
     var err = $('#perr');
     if (isNaN(p.age) || isNaN(p.weight) || isNaN(p.height)) { err.textContent = 'Rellena edad, peso y altura con números.'; return; }
     if (p.age < 18 || p.age > 80) { err.textContent = 'Esta app está pensada para adultos de 18 a 80 años.'; return; }
     if (p.weight < 35 || p.weight > 250) { err.textContent = 'El peso debe estar entre 35 y 250 kg.'; return; }
     if (p.height < 120 || p.height > 230) { err.textContent = 'La altura debe estar entre 120 y 230 cm.'; return; }
+    if (p.bf !== null && (isNaN(p.bf) || p.bf < 5 || p.bf > 60)) { err.textContent = 'La grasa corporal debe estar entre 5 y 60 %, o déjala vacía.'; return; }
+    var bmi = p.weight / Math.pow(p.height / 100, 2);
+    if (p.goal === 'lose' && bmi < 20) { err.textContent = 'Con tu peso y altura (IMC ' + nf(bmi, 1) + ') no es recomendable perder peso. Elige mantener peso o ganar músculo.'; return; }
     S.profile = p; save(); toast('Perfil guardado'); render();
   }
   function doSwap(id) {
@@ -905,6 +1097,8 @@ details.inner summary { cursor: pointer; min-height: 44px; display: flex; align-
   document.addEventListener('change', function (e) {
     var t = e.target;
     if (t.id === 'unit') updPreview();
+    if (t.id === 'ftype') setFoodType(t.value);
+    if (t.id === 'labelfile' && t.files && t.files[0]) { runOcr(t.files[0]); t.value = ''; }
     if (t.id === 'impfile' && t.files && t.files[0]) {
       var fr = new FileReader();
       fr.onload = function () { reviewImport(String(fr.result)); t.value = ''; };
