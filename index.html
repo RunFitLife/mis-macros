@@ -171,6 +171,18 @@ body.noscroll { overflow: hidden; }
 .scrim { position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, .45); border: 0; padding: 0; }
 .dlg { position: fixed; z-index: 21; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 6vh); width: min(92vw, 560px); max-height: 88%; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
 .dlg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+#toast.act { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+#toast button { background: none; border: 0; color: inherit; text-decoration: underline; font-weight: 600; min-height: 36px; padding: 0 6px; }
+.wchart, .wbars { width: 100%; height: auto; display: block; margin: 10px 0 4px; }
+.wchart .wg, .wbars .wg { stroke: var(--line); stroke-width: 1; }
+.wchart .wtrend { fill: none; stroke: var(--prot); stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
+.wchart .wp { fill: var(--muted); opacity: .7; }
+.wchart text, .wbars text { fill: var(--muted); font-size: 10px; font-family: var(--font-body); }
+.wbars .wb { fill: var(--prot); }
+.wbars .wb.off { fill: var(--track); }
+.wbars .wl { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.weeklab { font-family: var(--font-head); font-weight: 600; font-size: 20px; text-align: center; flex: 1; }
+.advice { background: var(--track); border-radius: 12px; padding: 12px; margin: 10px 0; }
 .nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); display: flex; justify-content: center; padding-bottom: env(safe-area-inset-bottom, 0px); }
 .nav-in { display: flex; width: 100%; max-width: 640px; }
 .nav button { flex: 1; min-height: 62px; background: none; border: 0; font-weight: 500; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
@@ -187,6 +199,7 @@ body.noscroll { overflow: hidden; }
   <div class="nav-in" id="nav">
     <button data-v="today">Hoy</button>
     <button data-v="add">Añadir</button>
+    <button data-v="progress">Progreso</button>
     <button data-v="profile">Perfil</button>
   </div>
 </nav>
@@ -216,8 +229,13 @@ body.noscroll { overflow: hidden; }
   }
   var tt;
   function toast(m) {
-    var t = $('#toast'); t.textContent = m; t.classList.add('show');
+    var t = $('#toast'); t.classList.remove('act'); t.textContent = m; t.classList.add('show');
     clearTimeout(tt); tt = setTimeout(function () { t.classList.remove('show'); }, 2200);
+  }
+  function toastUndo(m) {
+    var t = $('#toast'); t.innerHTML = '<span>' + esc(m) + '</span><button data-undo="1">Deshacer</button>';
+    t.classList.add('show'); t.classList.add('act');
+    clearTimeout(tt); tt = setTimeout(function () { t.classList.remove('show'); t.classList.remove('act'); }, 6000);
   }
 
   var ICONS = {
@@ -239,6 +257,7 @@ body.noscroll { overflow: hidden; }
     shaker: '<path d="M7 9h10l-1 11a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1L7 9z"/><path d="M6 9h12M9 5h6v4H9z"/><path d="M9.5 14h5"/>',
     capsule: '<g transform="rotate(-40 12 12)"><rect x="3" y="8.5" width="18" height="7" rx="3.5"/><path d="M12 8.5v7"/></g>',
     target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+    trend: '<path d="M4 19V5M4 19h16"/><path d="M7.5 15l3.5-4 3 3 5-6"/>',
     star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8 6.8 19.6l1-5.8-4.3-4.1 5.9-.9L12 3.5z"/>',
     camera: '<path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
     download: '<path d="M12 4v11M7.5 11L12 15.5 16.5 11M5 20h14"/>',
@@ -431,6 +450,8 @@ body.noscroll { overflow: hidden; }
     S.supps = S.supps || defaultSupps();
     S.favs = Array.isArray(S.favs) ? S.favs : [];
     S.recent = Array.isArray(S.recent) ? S.recent : [];
+    S.weights = (Array.isArray(S.weights) ? S.weights : []).filter(function (w) { return w && /^\d{4}-\d{2}-\d{2}$/.test(String(w.d)) && isFinite(w.w); }).sort(function (a, b) { return a.d < b.d ? -1 : 1; });
+    if (!S.adj || typeof S.adj !== 'object' || !isFinite(S.adj.kcal)) S.adj = null;
     Object.keys(S.days).forEach(function (k) {
       (S.days[k].items || []).forEach(function (i) { if (MEALS.indexOf(i.meal) === -1) i.meal = 'Extra'; });
     });
@@ -452,7 +473,7 @@ body.noscroll { overflow: hidden; }
   function foodByName(n) { var a = allFoods(); for (var i = 0; i < a.length; i++) if (a[i].n === n) return a[i]; return null; }
 
   /* ---------- Cálculos ---------- */
-  function targets(p) {
+  function targets(p, adjOverride) {
     if (!p) return null;
     var notes = [];
     var hm = p.height / 100, h2 = hm * hm, bmi = p.weight / h2;
@@ -476,6 +497,8 @@ body.noscroll { overflow: hidden; }
     if (goal === 'lose') pct = -(bmi >= 27 ? 0.20 : 0.15);
     else if (goal === 'gain') pct = bmi < 25 ? 0.10 : (bmi < 30 ? 0.05 : 0);
     var k = tdee * (1 + pct);
+    var adj = adjOverride !== undefined ? adjOverride : ((S && S.adj && isFinite(S.adj.kcal)) ? S.adj.kcal : 0);
+    if (adj) { k += adj; notes.push('Incluye un ajuste de ' + (adj > 0 ? '+' : '') + adj + ' kcal según tu progreso de peso.'); }
 
     /* 3. Límites de seguridad: ritmo máximo, no bajar del basal y mínimos absolutos */
     if (pct < 0) {
@@ -547,7 +570,7 @@ body.noscroll { overflow: hidden; }
   function status(r, lowT, highT) { return r < lowT ? 'low' : (r > highT ? 'high' : 'ok'); }
 
   /* ---------- Vistas ---------- */
-  var view = 'today', cur = dateKey(new Date()), picked = null, lastList = [], curMeal = defaultMeal(), showAllFoods = false, resMore = false, lastRecent = [];
+  var view = 'today', cur = dateKey(new Date()), picked = null, lastList = [], curMeal = defaultMeal(), showAllFoods = false, resMore = false, lastRecent = [], editing = null, lastDeleted = null, weekOff = 0;
 
   function laneHTML(o) {
     var r = o.tar ? o.val / o.tar : 0, st = o.limit ? (r > 1 ? 'high' : 'ok') : status(r, o.lowT, o.highT), diff = o.tar - o.val, dec = o.dec || 0;
@@ -628,7 +651,8 @@ body.noscroll { overflow: hidden; }
         var sw = i.swap ? foodByName(i.swap) : null;
         h += '<li><div class="irow"><div><div class="iname">' + esc(i.name) + '</div><div class="imacros"><span>' + (i.l ? nf(i.g / (i.d || 1)) + ' ml' : nf(i.g) + ' g') + '</span><span>' + nf(i.k) + ' kcal</span>' +
           '<span>P ' + nf(i.p, 1) + ' g</span><span>C ' + nf(i.c, 1) + ' g</span><span>G ' + nf(i.f, 1) + ' g</span></div></div>' +
-          '<button class="ib" data-del="' + i.id + '" aria-label="Quitar ' + esc(i.name) + '">' + ic('x', 18) + '</button></div>';
+          '<div class="step"><button class="ib" data-edit="' + i.id + '" aria-label="Editar ' + esc(i.name) + '">' + ic('pencil', 18) + '</button>' +
+          '<button class="ib" data-del="' + i.id + '" aria-label="Quitar ' + esc(i.name) + '">' + ic('x', 18) + '</button></div></div>';
         if (sw) h += '<div class="swap"><span class="sw-t">' + ic('swap', 18) + '<span>Mejor opción: <b>' + esc(sw.n) + '</b>. ' + esc(i.why || '') + '.</span></span><button class="link" data-swap="' + i.id + '">Cambiar</button></div>';
         h += '</li>';
       });
@@ -774,7 +798,7 @@ body.noscroll { overflow: hidden; }
     var sh = $('#sheet');
     if (sh) { sh.hidden = true; sh.innerHTML = ''; }
     document.body.classList.remove('noscroll');
-    picked = null;
+    picked = null; editing = null;
   }
   function unitsOf(f) {
     var base = f.us || (f.u ? [f.u] : []);
@@ -1058,6 +1082,248 @@ body.noscroll { overflow: hidden; }
     toast(dup ? 'Ya estaba en tus alimentos' : 'Guardado en tus alimentos');
   }
 
+  /* ---------- Editar lo ya añadido ---------- */
+  var NUTS = ['k', 'p', 'c', 'f', 'fi', 'ca', 'fe', 'vc', 'po', 'mg', 'su', 'sa'];
+  function findItem(id) {
+    var r = null;
+    day(cur).items.forEach(function (i, n) { if (i.id === id) r = { item: i, index: n }; });
+    return r;
+  }
+  function openEdit(id) {
+    var r = findItem(id); if (!r) return;
+    var it = r.item, food = foodByName(it.name) || { n: it.name, l: !!it.l, d: it.d || 1 };
+    editing = { id: id, food: food };
+    var isMl = !!it.l, qty = isMl ? it.g / (it.d || 1) : it.g;
+    var h = '<button class="scrim" data-close="1" aria-label="Cerrar"></button><div class="dlg" role="dialog" aria-modal="true" aria-label="Editar ' + esc(it.name) + '">' +
+      '<div class="dlg-head"><h2>' + esc(it.name) + '</h2><button class="ib" data-close="1" aria-label="Cerrar">' + ic('x', 18) + '</button></div>' +
+      '<div class="row"><div class="field"><label for="eqty">Cantidad</label><input id="eqty" type="text" inputmode="decimal" value="' + String(Math.round(qty * 10) / 10) + '"></div>' +
+      '<div class="field"><label for="eunit">Unidad</label><select id="eunit">' + unitSelectHTML(food) + '</select></div></div>' +
+      '<div class="field"><label for="emeal">Comida</label><select id="emeal">' + MEALS.map(function (m) { return '<option' + (m === it.meal ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select></div>' +
+      '<p class="muted small" id="epreview"></p><div class="btns"><button class="btn" id="esave">Guardar cambios</button>' +
+      '<button class="btn ghost" data-edel="' + esc(id) + '">' + ic('x', 18) + '<span>Quitar</span></button></div><p class="err" id="eerr" role="alert"></p></div>';
+    var sh = $('#sheet'); sh.innerHTML = h; sh.hidden = false; document.body.classList.add('noscroll');
+    var u = $('#eunit'); u.value = isMl ? 'ml' : 'g';
+    if (u.selectedIndex < 0) u.selectedIndex = 0;
+    updEditPreview();
+    setTimeout(function () { var q = $('#eqty'); if (q && q.focus) { q.focus(); if (q.select) q.select(); } }, 40);
+  }
+  function editGrams() {
+    var qty = parseNum($('#eqty').value), un = $('#eunit').value, f = editing.food;
+    return /^u\d+$/.test(un) ? qty * unitsOf(f)[Number(un.slice(1))][1] : (un === 'ml' ? qty * (f.d || 1) : qty);
+  }
+  function updEditPreview() {
+    if (!editing) return;
+    var r = findItem(editing.id), el = $('#epreview'); if (!r || !el) return;
+    var g = editGrams(), it = r.item;
+    if (!(g > 0) || !(it.g > 0)) { el.textContent = ''; return; }
+    var f = g / it.g;
+    el.textContent = nf(g) + ' g: ' + nf(it.k * f) + ' kcal, P ' + nf(it.p * f, 1) + ' g, C ' + nf(it.c * f, 1) + ' g, G ' + nf(it.f * f, 1) + ' g';
+  }
+  function saveEdit() {
+    if (!editing) return;
+    var r = findItem(editing.id); if (!r) return closePicker();
+    var it = r.item, g = editGrams();
+    if (!(g > 0) || g > 3000 || !(it.g > 0)) { $('#eerr').textContent = 'Escribe una cantidad válida, mayor que 0 y menor de 3000 g.'; return; }
+    var f = g / it.g;
+    NUTS.forEach(function (x) { it[x] = (it[x] || 0) * f; });
+    it.g = g; it.meal = $('#emeal').value;
+    save(); closePicker(); toast('Cambios guardados'); render();
+  }
+  function removeItem(id) {
+    var r = findItem(id); if (!r) return;
+    day(cur).items.splice(r.index, 1);
+    lastDeleted = { key: cur, item: r.item, index: r.index };
+    save(); render();
+    toastUndo('Quitado: ' + r.item.name);
+  }
+  function undoDelete() {
+    if (!lastDeleted) return;
+    var d = day(lastDeleted.key);
+    d.items.splice(Math.min(lastDeleted.index, d.items.length), 0, lastDeleted.item);
+    lastDeleted = null; save();
+    var t = $('#toast'); t.classList.remove('show'); t.classList.remove('act');
+    render(); if (view === 'add') updAddSummary();
+  }
+
+  /* ---------- Progreso: peso, ajuste de calorías y resumen semanal ---------- */
+  function dayNum(k) { var p = k.split('-').map(Number); return Math.round(Date.UTC(p[0], p[1] - 1, p[2]) / 86400000); }
+  function fmtShort(k) { var p = k.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); }
+  function emaSeries(arr) {
+    var out = [], e = null, prev = null;
+    arr.forEach(function (w) {
+      if (e === null) e = w.w; else e += (1 - Math.exp(-(dayNum(w.d) - prev) / 7)) * (w.w - e);
+      prev = dayNum(w.d); out.push(e);
+    });
+    return out;
+  }
+  function slopePerWeek(arr) {
+    var n = arr.length, t0 = dayNum(arr[0].d), sx = 0, sy = 0, sxx = 0, sxy = 0;
+    arr.forEach(function (w) { var x = dayNum(w.d) - t0; sx += x; sy += w.w; sxx += x * x; sxy += x * w.w; });
+    var den = n * sxx - sx * sx;
+    return den ? (n * sxy - sx * sy) / den * 7 : 0;
+  }
+  function weightChart(ws) {
+    var from = shiftDay(dateKey(new Date()), -120), arr = ws.filter(function (w) { return w.d >= from; });
+    if (arr.length < 2) return '<p class="muted small" style="margin-top:12px">Con 2 registros o más verás aquí la evolución de tu peso.</p>';
+    var W = 320, H = 150, L = 36, R = 8, Tp = 10, B = 22;
+    var t0 = dayNum(arr[0].d), span = Math.max(1, dayNum(arr[arr.length - 1].d) - t0);
+    var vals = arr.map(function (w) { return w.w; }), mn = Math.min.apply(null, vals) - 0.5, mx = Math.max.apply(null, vals) + 0.5;
+    function X(d) { return L + (dayNum(d) - t0) / span * (W - L - R); }
+    function Y(v) { return Tp + (mx - v) / (mx - mn) * (H - Tp - B); }
+    var em = emaSeries(arr), line = arr.map(function (w, i) { return X(w.d).toFixed(1) + ',' + Y(em[i]).toFixed(1); }).join(' ');
+    return '<svg class="wchart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Evolución del peso: ' + nf(arr[0].w, 1) + ' kg el ' + fmtShort(arr[0].d) + ' y ' + nf(arr[arr.length - 1].w, 1) + ' kg el ' + fmtShort(arr[arr.length - 1].d) + '">' +
+      '<line class="wg" x1="' + L + '" y1="' + Y(mx).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(mx).toFixed(1) + '"/><line class="wg" x1="' + L + '" y1="' + Y(mn).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(mn).toFixed(1) + '"/>' +
+      '<text x="' + (L - 4) + '" y="' + (Y(mx) + 3).toFixed(1) + '" text-anchor="end">' + nf(mx, 1) + '</text><text x="' + (L - 4) + '" y="' + (Y(mn) + 3).toFixed(1) + '" text-anchor="end">' + nf(mn, 1) + '</text>' +
+      arr.map(function (w) { return '<circle class="wp" cx="' + X(w.d).toFixed(1) + '" cy="' + Y(w.w).toFixed(1) + '" r="2.6"/>'; }).join('') +
+      '<polyline class="wtrend" points="' + line + '"/>' +
+      '<text x="' + L + '" y="' + (H - 6) + '">' + fmtShort(arr[0].d) + '</text><text x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + fmtShort(arr[arr.length - 1].d) + '</text></svg>';
+  }
+  function calorieAdvice(T) {
+    var p = S.profile, ws = S.weights, today = dateKey(new Date());
+    var from = shiftDay(today, -28), since = S.adj && S.adj.date ? S.adj.date : null;
+    if (since && since > from) from = since;
+    var win = ws.filter(function (w) { return w.d >= from; });
+    var adjNow = S.adj ? S.adj.kcal : 0;
+    if (win.length < 4) return { st: 'wait', msg: 'Para proponerte un ajuste necesito al menos 4 registros de peso repartidos en 2 semanas o más' + (since ? ' desde tu último ajuste' : '') + '. Ahora tengo ' + win.length + '.' };
+    var span = dayNum(win[win.length - 1].d) - dayNum(win[0].d);
+    if (span < 14) return { st: 'wait', msg: 'Llevo ' + span + ' días de datos. Con 14 días o más podré proponerte un ajuste con más seguridad.' };
+    var slope = slopePerWeek(win), em = emaSeries(win), wt = em[em.length - 1], pct = slope / wt * 100;
+    var range = T.goal === 'lose' ? [-0.75, -0.25] : (T.goal === 'gain' ? [0.1, 0.4] : [-0.25, 0.25]);
+    var res = { st: 'ok', slope: slope, pct: pct, wt: wt };
+    var delta = 0;
+    if (pct < range[0]) {
+      delta = 150;
+      res.why = T.goal === 'lose' ? 'Estás perdiendo más rápido de lo recomendable.' : (T.goal === 'gain' ? 'Casi no estás ganando peso.' : 'Estás perdiendo peso sin buscarlo.');
+      if (pct < -1) res.why += ' Perder más de un 1 % a la semana no es sano: si no es intencionado, consúltalo con un profesional.';
+    } else if (pct > range[1]) {
+      delta = -150;
+      res.why = T.goal === 'lose' ? 'Estás perdiendo más despacio de lo previsto.' : (T.goal === 'gain' ? 'Estás ganando más rápido de lo recomendable, y parte será grasa.' : 'Estás ganando peso sin buscarlo.');
+    }
+    if (!delta) return res;
+    var newAdj = Math.max(-400, Math.min(400, adjNow + delta)), T2 = targets(p, newAdj), real = T2.k - T.k;
+    if (!real) {
+      res.st = 'floor';
+      res.why += delta < 0 ? ' Ya estás en el mínimo seguro de calorías, así que no bajaría más: revisa tu actividad o consulta con un profesional.' : ' Ya estás en el máximo de ajuste que propongo (400 kcal): consulta con un profesional.';
+      return res;
+    }
+    res.st = 'change'; res.newAdj = newAdj; res.real = real; res.kNew = T2.k;
+    return res;
+  }
+  function weekDays(off) {
+    var end = shiftDay(dateKey(new Date()), off * 7), arr = [];
+    for (var i = 6; i >= 0; i--) arr.push(shiftDay(end, -i));
+    return arr;
+  }
+  function weekStats(off) {
+    var days = weekDays(off), logged = 0, sum = {}, daily = [];
+    NUTS.forEach(function (x) { sum[x] = 0; });
+    days.forEach(function (k) {
+      var d = S.days[k], has = d && ((d.items && d.items.length) || Object.keys(d.supps || {}).some(function (id) { return d.supps[id] > 0; }));
+      var t = has ? totals(k) : null;
+      daily.push({ k: k, t: t });
+      if (t) { logged++; NUTS.forEach(function (x) { sum[x] += t[x] || 0; }); }
+    });
+    var avg = {}; NUTS.forEach(function (x) { avg[x] = logged ? sum[x] / logged : 0; });
+    return { days: days, daily: daily, logged: logged, avg: avg };
+  }
+  function weekBars(st, target) {
+    var W = 320, H = 140, L = 8, R = 8, Tp = 12, B = 22, mx = target * 1.3;
+    st.daily.forEach(function (d) { if (d.t && d.t.k > mx) mx = d.t.k; });
+    var slot = (W - L - R) / 7, bw = Math.min(30, slot - 8), letters = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+    function Y(v) { return Tp + (1 - v / mx) * (H - Tp - B); }
+    var out = '<svg class="wbars" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Calorías de cada uno de los 7 días frente al objetivo de ' + nf(target) + ' kcal">';
+    st.daily.forEach(function (d, i) {
+      var v = d.t ? d.t.k : 0, x = L + i * slot + (slot - bw) / 2, y = Y(v), p = d.k.split('-').map(Number);
+      out += '<rect class="wb' + (d.t ? '' : ' off') + '" x="' + x.toFixed(1) + '" y="' + (d.t ? y : H - B - 3).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + (d.t ? H - B - y : 3).toFixed(1) + '" rx="4"/>' +
+        '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle">' + letters[new Date(p[0], p[1] - 1, p[2]).getDay()] + '</text>';
+    });
+    out += '<line class="wl" x1="' + L + '" y1="' + Y(target).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(target).toFixed(1) + '"/></svg>';
+    return out;
+  }
+  function renderProgress() {
+    var h = '<header class="datenav"><h1>Progreso</h1></header>';
+    if (!S.profile) return h + '<section class="card"><h2>Primero tu perfil</h2><p>Necesito tus datos para calcular tus objetivos.</p><button class="btn" data-go="profile">Completar perfil</button></section>';
+    var T = targets(S.profile), ws = S.weights, today = dateKey(new Date());
+
+    /* Peso */
+    h += '<section class="card"><h2 class="hi">' + chip('trend', 'prot') + 'Peso</h2>' +
+      '<div class="row"><div class="field"><label for="wval">Peso (kg)</label><input id="wval" type="text" inputmode="decimal" placeholder="Por ejemplo 80,4" autocomplete="off"></div>' +
+      '<div class="field"><label for="wdate">Día</label><input id="wdate" type="date" value="' + today + '" max="' + today + '"></div></div>' +
+      '<button class="btn" id="wsave">Guardar peso</button><p class="err" id="werr" role="alert"></p>';
+    if (ws.length) {
+      var last = ws[ws.length - 1], em = emaSeries(ws), tr = em[em.length - 1];
+      h += '<p style="margin-top:8px">Último registro: <b>' + nf(last.w, 1) + ' kg</b> el ' + fmtShort(last.d) + '. Peso de tendencia: <b>' + nf(tr, 1) + ' kg</b>.</p>';
+    }
+    h += weightChart(ws) + '<p class="muted small">Pésate a la misma hora, por ejemplo por la mañana. Fíjate en la tendencia, no en un día suelto: el peso sube y baja por el agua y la sal.</p>';
+    if (ws.length) {
+      h += '<details class="inner"><summary>Historial de peso</summary><ul class="results" style="margin-top:4px">' + ws.slice().reverse().slice(0, 20).map(function (w) {
+        return '<li class="rrow"><div class="res"><span class="rn">' + nf(w.w, 1) + ' kg</span><span class="rm">' + fmtShort(w.d) + '</span></div>' +
+          '<button class="ib" data-wdel="' + w.d + '" aria-label="Quitar el peso del ' + fmtShort(w.d) + '">' + ic('x', 18) + '</button></li>';
+      }).join('') + '</ul></details>';
+    }
+    h += '</section>';
+
+    /* Ajuste de calorías */
+    var adv = calorieAdvice(T);
+    h += '<section class="card"><h2 class="hi">' + chip('target', 'carb') + 'Ajuste de calorías</h2>';
+    h += '<p>Objetivo actual: <b>' + nf(T.k) + ' kcal</b>' + (S.adj ? ' (con un ajuste de ' + (S.adj.kcal > 0 ? '+' : '') + S.adj.kcal + ' kcal)' : '') + '.</p>';
+    if (adv.st === 'wait') {
+      h += '<p class="muted">' + esc(adv.msg) + '</p>';
+    } else {
+      h += '<p>Tu peso cambia unos <b>' + (adv.slope >= 0 ? '+' : '−') + nf(Math.abs(adv.slope), 1) + ' kg por semana</b> (' + (adv.pct >= 0 ? '+' : '−') + nf(Math.abs(adv.pct), 1) + ' % de tu peso).</p>';
+      if (adv.st === 'ok') h += '<div class="advice">Va en el ritmo esperado para tu objetivo. No cambies nada.</div>';
+      else if (adv.st === 'floor') h += '<div class="advice">' + esc(adv.why) + '</div>';
+      else h += '<div class="advice">' + esc(adv.why) + ' Te propongo pasar de ' + nf(T.k) + ' a <b>' + nf(adv.kNew) + ' kcal</b> (' + (adv.real > 0 ? '+' : '−') + nf(Math.abs(adv.real)) + ' kcal).' +
+        '<div class="btns" style="margin-top:10px"><button class="btn" data-adjapply="' + adv.newAdj + '">Aplicar el ajuste</button></div></div>';
+    }
+    if (ws.length) {
+      var em2 = emaSeries(ws), tw = em2[em2.length - 1];
+      if (Math.abs(tw - S.profile.weight) >= 2) {
+        h += '<div class="advice">Tu peso de tendencia (' + nf(tw, 1) + ' kg) se aleja del de tu perfil (' + nf(S.profile.weight, 1) + ' kg). Actualizarlo recalcula tus objetivos.' +
+          '<div class="btns" style="margin-top:10px"><button class="btn ghost" data-profw="' + (Math.round(tw * 10) / 10) + '">Actualizar a ' + nf(tw, 1) + ' kg</button></div></div>';
+      }
+    }
+    if (S.adj) h += '<div class="btns"><button class="btn ghost" data-adjclear="1">Quitar el ajuste</button></div>';
+    h += '<p class="muted small" style="margin-top:10px">Cambia las calorías solo tras 2 semanas o más de datos y no más de 150 kcal cada vez. Es una ayuda, no un diagnóstico.</p></section>';
+
+    /* Resumen semanal */
+    var st = weekStats(weekOff), a = st.avg, d0 = st.days[0], d6 = st.days[6];
+    h += '<section class="card"><h2 class="hi">' + chip('calendar', 'prot') + 'Resumen semanal</h2>' +
+      '<div class="datenav" style="margin:0 0 8px"><button class="ib" data-week="-1" aria-label="Semana anterior">&#8249;</button><div class="weeklab">' + fmtShort(d0) + ' al ' + fmtShort(d6) + '</div>' +
+      '<button class="ib" data-week="1" aria-label="Semana siguiente"' + (weekOff >= 0 ? ' disabled' : '') + '>&#8250;</button></div>';
+    if (!st.logged) {
+      h += '<p class="muted">No hay comidas registradas en estos 7 días.</p></section>';
+    } else {
+      h += '<p><b>' + st.logged + ' de 7 días</b> con registro. Promedio de los días registrados: <b>' + nf(a.k) + ' kcal</b> (' + Math.round(a.k / T.k * 100) + ' % de tu objetivo).</p>' + weekBars(st, T.k) +
+        '<p class="muted small">La línea marca tu objetivo de ' + nf(T.k) + ' kcal. Los días sin registro no cuentan en los promedios.</p>' +
+        '<h3 class="sub">Macros, promedio diario</h3>' +
+        laneHTML({ name: 'Proteína', val: a.p, tar: T.p, unit: 'g', col: 'var(--prot)', lowT: 0.95, highT: 99 }) +
+        laneHTML({ name: 'Carbohidratos', val: a.c, tar: T.c, unit: 'g', col: 'var(--carb)', lowT: 0.9, highT: 1.15 }) +
+        laneHTML({ name: 'Grasas', val: a.f, tar: T.f, unit: 'g', col: 'var(--fat)', lowT: 0.9, highT: 1.15 }) + '</section>';
+      h += '<details class="card micro" open><summary class="hi">' + chip('leaf', 'fib') + 'Fibra y micronutrientes</summary>' +
+        laneHTML({ name: 'Fibra', val: a.fi, tar: T.fi, unit: 'g', col: 'var(--fib)', lowT: 1, highT: 99 }) +
+        laneHTML({ name: 'Calcio', val: a.ca, tar: T.ca, unit: 'mg', col: 'var(--fib)', lowT: 1, highT: 99 }) +
+        laneHTML({ name: 'Hierro', val: a.fe, tar: T.fe, unit: 'mg', col: 'var(--fib)', lowT: 1, highT: 99, dec: 1 }) +
+        laneHTML({ name: 'Vitamina C', val: a.vc, tar: T.vc, unit: 'mg', col: 'var(--fib)', lowT: 1, highT: 99 }) +
+        laneHTML({ name: 'Potasio', val: a.po, tar: T.po, unit: 'mg', col: 'var(--fib)', lowT: 1, highT: 99 }) +
+        laneHTML({ name: 'Magnesio', val: a.mg, tar: T.mg, unit: 'mg', col: 'var(--fib)', lowT: 1, highT: 99 }) +
+        laneHTML({ name: 'Sal', val: a.sa, tar: T.sa, unit: 'g', col: 'var(--fib)', limit: true, dec: 1 }) +
+        '<p class="small" style="margin:0 0 4px"><b>Azúcares totales:</b> ' + nf(a.su, 1) + ' g al día de media.</p>' +
+        '<p class="muted small" style="margin-top:12px">No cuentan para tus objetivos. Para vitaminas y minerales importa el promedio de la semana, y los datos de los alimentos son aproximados e incompletos.</p></details>';
+    }
+    return h;
+  }
+  function saveWeight() {
+    var v = parseNum($('#wval').value), d = $('#wdate').value || dateKey(new Date()), err = $('#werr');
+    if (isNaN(v) || v < 30 || v > 300) { err.textContent = 'Escribe un peso entre 30 y 300 kg.'; return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > dateKey(new Date())) { err.textContent = 'Elige un día que no sea futuro.'; return; }
+    v = Math.round(v * 10) / 10;
+    S.weights = S.weights.filter(function (w) { return w.d !== d; });
+    S.weights.push({ d: d, w: v });
+    S.weights.sort(function (a, b) { return a.d < b.d ? -1 : 1; });
+    save(); toast('Peso guardado'); render();
+  }
+
   /* ---------- Comidas habituales ---------- */
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
   function saveFav(meal) {
@@ -1143,6 +1409,10 @@ body.noscroll { overflow: hidden; }
       ['k', 'p', 'c', 'f', 'fi', 'ca', 'fe', 'vc', 'po', 'mg', 'su', 'sa'].forEach(function (x) { r.food[x] = Number(r.food[x]) || 0; });
       return { food: r.food, qty: Number(r.qty), un: String(r.un || 'g'), g: Number(r.g), label: String(r.label || '') };
     });
+    o.weights = (Array.isArray(o.weights) ? o.weights : []).filter(function (w) {
+      return w && /^\d{4}-\d{2}-\d{2}$/.test(String(w.d)) && isFinite(w.w) && w.w > 20 && w.w < 400;
+    }).map(function (w) { return { d: String(w.d), w: Number(w.w) }; });
+    o.adj = (o.adj && typeof o.adj === 'object' && isFinite(o.adj.kcal)) ? { kcal: Math.max(-400, Math.min(400, Number(o.adj.kcal))), date: String(o.adj.date || '') } : null;
     S = o; save(); load();
     toast('Datos restaurados');
     view = S.profile ? 'today' : 'profile'; render(); window.scrollTo(0, 0);
@@ -1216,6 +1486,7 @@ body.noscroll { overflow: hidden; }
     if (p.bf !== null && (isNaN(p.bf) || p.bf < 5 || p.bf > 60)) { err.textContent = 'La grasa corporal debe estar entre 5 y 60 %, o déjala vacía.'; return; }
     var bmi = p.weight / Math.pow(p.height / 100, 2);
     if (p.goal === 'lose' && bmi < 20) { err.textContent = 'Con tu peso y altura (IMC ' + nf(bmi, 1) + ') no es recomendable perder peso. Elige mantener peso o ganar músculo.'; return; }
+    if (S.profile && S.profile.goal !== p.goal) S.adj = null;
     S.profile = p; save(); toast('Perfil guardado'); render();
   }
   function doSwap(id) {
@@ -1230,7 +1501,7 @@ body.noscroll { overflow: hidden; }
 
   /* ---------- Render y eventos ---------- */
   function render() {
-    $('#app').innerHTML = view === 'today' ? renderToday() : (view === 'add' ? renderAdd() : renderProfile());
+    $('#app').innerHTML = view === 'today' ? renderToday() : (view === 'add' ? renderAdd() : (view === 'progress' ? renderProgress() : renderProfile()));
     Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function (b) {
       b.setAttribute('aria-current', b.getAttribute('data-v') === view ? 'page' : 'false');
     });
@@ -1246,6 +1517,16 @@ body.noscroll { overflow: hidden; }
     if (ds.bk === 'pasteimp') return reviewImport($('#imptext').value);
     if (ds.bk === 'impok') return applyImport();
     if (ds.bk === 'impno') { pendingImport = null; $('#impstatus').innerHTML = ''; return; }
+    if (ds.edit) return openEdit(ds.edit);
+    if (el.id === 'esave') return saveEdit();
+    if (ds.edel) { var eid = ds.edel; closePicker(); return removeItem(eid); }
+    if (ds.undo) return undoDelete();
+    if (el.id === 'wsave') return saveWeight();
+    if (ds.wdel) { S.weights = S.weights.filter(function (w) { return w.d !== ds.wdel; }); save(); return render(); }
+    if (ds.week) { weekOff = Math.min(0, weekOff + Number(ds.week)); return render(); }
+    if (ds.adjapply !== undefined) { S.adj = { kcal: Number(ds.adjapply), date: dateKey(new Date()) }; save(); toast('Ajuste aplicado'); return render(); }
+    if (ds.adjclear) { S.adj = null; save(); toast('Ajuste quitado'); return render(); }
+    if (ds.profw) { S.profile.weight = Number(ds.profw); S.adj = null; save(); toast('Peso del perfil actualizado'); return render(); }
     if (ds.meal) return setMeal(ds.meal);
     if (ds.close) return closePicker();
     if (ds.pickrecent !== undefined) {
@@ -1264,7 +1545,7 @@ body.noscroll { overflow: hidden; }
     if (ds.go) return setView(ds.go);
     if (ds.act === 'prev') { cur = shiftDay(cur, -1); return render(); }
     if (ds.act === 'next') { if (cur < dateKey(new Date())) { cur = shiftDay(cur, 1); render(); } return; }
-    if (ds.del) { var d = day(cur); d.items = d.items.filter(function (i) { return i.id !== ds.del; }); save(); return render(); }
+    if (ds.del) return removeItem(ds.del);
     if (ds.swap) return doSwap(ds.swap);
     if (ds.sd) { var dd = day(cur); dd.supps[ds.sd] = Math.max(0, Math.min(9, (dd.supps[ds.sd] || 0) + Number(ds.n))); save(); return render(); }
     if (ds.pick !== undefined) return showPicker(lastList[Number(ds.pick)]);
@@ -1293,11 +1574,13 @@ body.noscroll { overflow: hidden; }
   });
   document.addEventListener('input', function (e) {
     if (e.target.id === 'q') { resMore = false; showAllFoods = false; renderResults(e.target.value); }
+    if (e.target.id === 'eqty') updEditPreview();
     if (e.target.id === 'qty') updPreview();
   });
   document.addEventListener('change', function (e) {
     var t = e.target;
     if (t.id === 'unit') updPreview();
+    if (t.id === 'eunit') updEditPreview();
     if (t.id === 'ftype') setFoodType(t.value);
     if (t.getAttribute && t.getAttribute('data-favname')) {
       var fid = t.getAttribute('data-favname'), nm = String(t.value).trim();
@@ -1333,7 +1616,7 @@ body.noscroll { overflow: hidden; }
     if (e.key === 'Escape' && picked) closePicker();
   });
 
-  var NAVI = { today: 'calendar', add: 'plus', profile: 'user' };
+  var NAVI = { today: 'calendar', add: 'plus', progress: 'trend', profile: 'user' };
   Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function (b) {
     var label = b.textContent;
     b.innerHTML = ic(NAVI[b.getAttribute('data-v')], 24) + '<span>' + label + '</span>';
