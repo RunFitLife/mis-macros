@@ -1,4 +1,4 @@
-var CACHE = 'mis-macros-v11';
+var CACHE = 'mis-macros-v12';
 var SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
