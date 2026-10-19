@@ -182,6 +182,11 @@ body.noscroll { overflow: hidden; }
 .wbars .wb.off { fill: var(--track); }
 .wbars .wl { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .weeklab { font-family: var(--font-head); font-weight: 600; font-size: 20px; text-align: center; flex: 1; }
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.tile { background: var(--track); border-radius: 12px; padding: 10px 12px; }
+.tile > span { display: block; font-size: 13px; color: var(--muted); }
+.tile b { display: block; font-family: var(--font-head); font-size: 30px; line-height: 1.05; font-weight: 700; }
+.tile b small { font-size: 15px; font-weight: 500; color: var(--muted); }
 .advice { background: var(--track); border-radius: 12px; padding: 12px; margin: 10px 0; }
 .nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); display: flex; justify-content: center; padding-bottom: env(safe-area-inset-bottom, 0px); }
 .nav-in { display: flex; width: 100%; max-width: 640px; }
@@ -433,6 +438,27 @@ body.noscroll { overflow: hidden; }
     return TYPES.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === (sel || '') ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('');
   }
 
+  /* Datos que puede dar una báscula de composición corporal */
+  var WM = [
+    { k: 'w', n: 'Peso', s: 'Peso', u: 'kg', d: 1, lo: 30, hi: 300 },
+    { k: 'bf', n: 'Grasa corporal', s: 'Grasa', u: '%', d: 1, lo: 2, hi: 70, basic: true },
+    { k: 'mu', n: 'Masa muscular', s: 'Músculo', u: 'kg', d: 1, lo: 10, hi: 120, basic: true },
+    { k: 'wa', n: 'Agua corporal', s: 'Agua', u: '%', d: 1, lo: 25, hi: 80, basic: true },
+    { k: 'bo', n: 'Masa ósea', s: 'Hueso', u: 'kg', d: 2, lo: 0.5, hi: 8, basic: true },
+    { k: 'ms', n: 'Músculo esquelético', s: 'Esquelético', u: '%', d: 1, lo: 10, hi: 70 },
+    { k: 'vi', n: 'Grasa visceral', s: 'Visceral', u: 'nivel', d: 0, lo: 1, hi: 30 },
+    { k: 'bm', n: 'Metabolismo basal', s: 'Basal', u: 'kcal', d: 0, lo: 800, hi: 4500 },
+    { k: 'pr', n: 'Proteína corporal', s: 'Proteína', u: '%', d: 1, lo: 5, hi: 40 },
+    { k: 'sf', n: 'Grasa subcutánea', s: 'Subcutánea', u: '%', d: 1, lo: 2, hi: 60 },
+    { k: 'ma', n: 'Edad metabólica', s: 'Edad met.', u: 'años', d: 0, lo: 10, hi: 99 }
+  ];
+  function hasV(w, k) { return w[k] !== undefined && w[k] !== null && isFinite(w[k]); }
+  function cleanW(w) {
+    var o = { d: String(w.d), w: Number(w.w) };
+    WM.forEach(function (m) { if (m.k !== 'w' && hasV(w, m.k)) o[m.k] = Number(w[m.k]); });
+    return o;
+  }
+
   /* ---------- Estado ---------- */
   var S = null;
   function defaultSupps() {
@@ -450,7 +476,7 @@ body.noscroll { overflow: hidden; }
     S.supps = S.supps || defaultSupps();
     S.favs = Array.isArray(S.favs) ? S.favs : [];
     S.recent = Array.isArray(S.recent) ? S.recent : [];
-    S.weights = (Array.isArray(S.weights) ? S.weights : []).filter(function (w) { return w && /^\d{4}-\d{2}-\d{2}$/.test(String(w.d)) && isFinite(w.w); }).sort(function (a, b) { return a.d < b.d ? -1 : 1; });
+    S.weights = (Array.isArray(S.weights) ? S.weights : []).filter(function (w) { return w && /^\d{4}-\d{2}-\d{2}$/.test(String(w.d)) && isFinite(w.w); }).map(cleanW).sort(function (a, b) { return a.d < b.d ? -1 : 1; });
     if (!S.adj || typeof S.adj !== 'object' || !isFinite(S.adj.kcal)) S.adj = null;
     Object.keys(S.days).forEach(function (k) {
       (S.days[k].items || []).forEach(function (i) { if (MEALS.indexOf(i.meal) === -1) i.meal = 'Extra'; });
@@ -570,7 +596,7 @@ body.noscroll { overflow: hidden; }
   function status(r, lowT, highT) { return r < lowT ? 'low' : (r > highT ? 'high' : 'ok'); }
 
   /* ---------- Vistas ---------- */
-  var view = 'today', cur = dateKey(new Date()), picked = null, lastList = [], curMeal = defaultMeal(), showAllFoods = false, resMore = false, lastRecent = [], editing = null, lastDeleted = null, weekOff = 0;
+  var view = 'today', cur = dateKey(new Date()), picked = null, lastList = [], curMeal = defaultMeal(), showAllFoods = false, resMore = false, lastRecent = [], editing = null, lastDeleted = null, weekOff = 0, metricSel = 'w';
 
   function laneHTML(o) {
     var r = o.tar ? o.val / o.tar : 0, st = o.limit ? (r > 1 ? 'high' : 'ok') : status(r, o.lowT, o.highT), diff = o.tar - o.val, dec = o.dec || 0;
@@ -1162,21 +1188,99 @@ body.noscroll { overflow: hidden; }
     var den = n * sxx - sx * sx;
     return den ? (n * sxy - sx * sy) / den * 7 : 0;
   }
-  function weightChart(ws) {
-    var from = shiftDay(dateKey(new Date()), -120), arr = ws.filter(function (w) { return w.d >= from; });
-    if (arr.length < 2) return '<p class="muted small" style="margin-top:12px">Con 2 registros o más verás aquí la evolución de tu peso.</p>';
-    var W = 320, H = 150, L = 36, R = 8, Tp = 10, B = 22;
+  function metricChart(key) {
+    var m = WM.filter(function (x) { return x.k === key; })[0];
+    var from = shiftDay(dateKey(new Date()), -180);
+    var arr = S.weights.filter(function (w) { return w.d >= from && hasV(w, key); }).map(function (w) { return { d: w.d, w: Number(w[key]) }; });
+    if (arr.length < 2) return '<p class="muted small" style="margin-top:12px">Con 2 registros o más de «' + m.n.toLowerCase() + '» verás aquí su evolución.</p>';
+    var W = 320, H = 150, L = 40, R = 8, Tp = 10, B = 22;
     var t0 = dayNum(arr[0].d), span = Math.max(1, dayNum(arr[arr.length - 1].d) - t0);
-    var vals = arr.map(function (w) { return w.w; }), mn = Math.min.apply(null, vals) - 0.5, mx = Math.max.apply(null, vals) + 0.5;
+    var vals = arr.map(function (w) { return w.w; }), lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var pad = Math.max((hi - lo) * 0.15, m.d === 0 ? 1 : (m.d === 2 ? 0.05 : 0.3)), mn = lo - pad, mx = hi + pad;
     function X(d) { return L + (dayNum(d) - t0) / span * (W - L - R); }
     function Y(v) { return Tp + (mx - v) / (mx - mn) * (H - Tp - B); }
     var em = emaSeries(arr), line = arr.map(function (w, i) { return X(w.d).toFixed(1) + ',' + Y(em[i]).toFixed(1); }).join(' ');
-    return '<svg class="wchart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Evolución del peso: ' + nf(arr[0].w, 1) + ' kg el ' + fmtShort(arr[0].d) + ' y ' + nf(arr[arr.length - 1].w, 1) + ' kg el ' + fmtShort(arr[arr.length - 1].d) + '">' +
+    return '<h3 class="sub" style="margin-top:14px">' + m.n + ' (' + m.u + ')</h3>' +
+      '<svg class="wchart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + m.n + ': ' + nf(arr[0].w, m.d) + ' ' + m.u + ' el ' + fmtShort(arr[0].d) + ' y ' + nf(arr[arr.length - 1].w, m.d) + ' ' + m.u + ' el ' + fmtShort(arr[arr.length - 1].d) + '">' +
       '<line class="wg" x1="' + L + '" y1="' + Y(mx).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(mx).toFixed(1) + '"/><line class="wg" x1="' + L + '" y1="' + Y(mn).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(mn).toFixed(1) + '"/>' +
-      '<text x="' + (L - 4) + '" y="' + (Y(mx) + 3).toFixed(1) + '" text-anchor="end">' + nf(mx, 1) + '</text><text x="' + (L - 4) + '" y="' + (Y(mn) + 3).toFixed(1) + '" text-anchor="end">' + nf(mn, 1) + '</text>' +
+      '<text x="' + (L - 4) + '" y="' + (Y(mx) + 3).toFixed(1) + '" text-anchor="end">' + nf(mx, m.d) + '</text><text x="' + (L - 4) + '" y="' + (Y(mn) + 3).toFixed(1) + '" text-anchor="end">' + nf(mn, m.d) + '</text>' +
       arr.map(function (w) { return '<circle class="wp" cx="' + X(w.d).toFixed(1) + '" cy="' + Y(w.w).toFixed(1) + '" r="2.6"/>'; }).join('') +
       '<polyline class="wtrend" points="' + line + '"/>' +
       '<text x="' + L + '" y="' + (H - 6) + '">' + fmtShort(arr[0].d) + '</text><text x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + fmtShort(arr[arr.length - 1].d) + '</text></svg>';
+  }
+  function bfCat(sex, v) {
+    var b = sex === 'm' ? [6, 14, 18, 25] : [14, 21, 25, 32];
+    return v < b[0] ? 'muy bajo' : (v < b[1] ? 'atlético' : (v < b[2] ? 'en forma' : (v < b[3] ? 'promedio' : 'alto')));
+  }
+  function waterCat(sex, v) { var r = sex === 'm' ? [50, 65] : [45, 60]; return v < r[0] ? 'por debajo del rango habitual' : (v > r[1] ? 'por encima del rango habitual' : 'dentro del rango habitual'); }
+  function visCat(v) { return v <= 9 ? 'saludable' : (v <= 14 ? 'alto' : 'muy alto'); }
+  function bmiCat(b) { return b < 18.5 ? 'bajo peso' : (b < 25 ? 'normal' : (b < 30 ? 'sobrepeso' : 'obesidad')); }
+  function metricLatest(k) {
+    var ws = S.weights, last = null, prev = null;
+    for (var i = ws.length - 1; i >= 0; i--) {
+      if (hasV(ws[i], k)) { if (!last) last = ws[i]; else { prev = ws[i]; break; } }
+    }
+    return last ? { e: last, v: Number(last[k]), p: prev ? Number(prev[k]) : null } : null;
+  }
+  function tilesHTML() {
+    var p = S.profile, hm = p.height / 100, sex = p.sex, Tt = targets(p), tiles = [];
+    function dl(L, dec) {
+      if (!L || L.p === null) return '';
+      var d = L.v - L.p;
+      return Math.abs(d) < Math.pow(10, -dec) / 2 ? 'igual que el anterior' : ((d > 0 ? '+' : '−') + nf(Math.abs(d), dec) + ' desde el anterior');
+    }
+    function T(name, val, unit, dec, parts) {
+      var sub = parts.filter(function (x) { return x; }).join('. ');
+      tiles.push('<div class="tile"><span>' + name + '</span><b>' + nf(val, dec) + (unit ? ' <small>' + unit + '</small>' : '') + '</b>' + (sub ? '<span>' + sub + '</span>' : '') + '</div>');
+    }
+    var wL = metricLatest('w'), em = emaSeries(S.weights), tr = em[em.length - 1];
+    T('Peso', wL.v, 'kg', 1, [dl(wL, 1), S.weights.length > 1 ? 'Tendencia ' + nf(tr, 1) + ' kg' : '']);
+    var bmi = wL.v / (hm * hm);
+    T('IMC', bmi, '', 1, [bmiCat(bmi), 'No distingue músculo de grasa']);
+    var bfL = metricLatest('bf');
+    if (bfL) {
+      T('Grasa corporal', bfL.v, '%', 1, [bfCat(sex, bfL.v), dl(bfL, 1)]);
+      var bw = bfL.e.w, fm = bw * bfL.v / 100, lean = bw - fm;
+      T('Masa grasa', fm, 'kg', 1, []);
+      T('Masa magra', lean, 'kg', 1, ['Músculo, agua, huesos y órganos']);
+      T('Índice de masa magra', lean / (hm * hm), 'kg/m²', 1, []);
+    }
+    var muL = metricLatest('mu');
+    if (muL) T('Masa muscular', muL.v, 'kg', 1, [muL.e.w ? nf(muL.v / muL.e.w * 100, 0) + ' % del peso' : '', dl(muL, 1)]);
+    var msL = metricLatest('ms'); if (msL) T('Músculo esquelético', msL.v, '%', 1, [dl(msL, 1)]);
+    var waL = metricLatest('wa'); if (waL) T('Agua corporal', waL.v, '%', 1, [waterCat(sex, waL.v), dl(waL, 1)]);
+    var boL = metricLatest('bo'); if (boL) T('Masa ósea', boL.v, 'kg', 2, [dl(boL, 2)]);
+    var viL = metricLatest('vi'); if (viL) T('Grasa visceral', viL.v, 'nivel', 0, [visCat(viL.v), dl(viL, 0)]);
+    var bmL = metricLatest('bm'); if (bmL) T('Metabolismo basal', bmL.v, 'kcal', 0, ['Tu fórmula da ' + nf(Tt.bmr) + ' kcal']);
+    var prL = metricLatest('pr'); if (prL) T('Proteína corporal', prL.v, '%', 1, [dl(prL, 1)]);
+    var sfL = metricLatest('sf'); if (sfL) T('Grasa subcutánea', sfL.v, '%', 1, [dl(sfL, 1)]);
+    var maL = metricLatest('ma');
+    if (maL) { var df = maL.v - p.age; T('Edad metabólica', maL.v, 'años', 0, [df < 0 ? nf(-df, 0) + ' años menos que tu edad' : (df > 0 ? nf(df, 0) + ' años más que tu edad' : 'igual que tu edad')]); }
+    return '<div class="tiles">' + tiles.join('') + '</div>';
+  }
+  function entrySummary(w) {
+    var parts = [nf(w.w, 1) + ' kg'];
+    WM.forEach(function (m) {
+      if (m.k !== 'w' && hasV(w, m.k) && parts.length < 4) parts.push(m.s.toLowerCase() + ' ' + nf(w[m.k], m.d) + (m.u === 'nivel' ? '' : ' ' + m.u));
+    });
+    return parts.join(', ');
+  }
+  function wField(m) {
+    var id = m.k === 'w' ? 'wval' : 'wf-' + m.k;
+    return '<div class="field"><label for="' + id + '">' + m.n + ' (' + m.u + ')</label><input id="' + id + '" type="text" inputmode="decimal" autocomplete="off"></div>';
+  }
+  function editWeightEntry(d) {
+    var e = null; S.weights.forEach(function (w) { if (w.d === d) e = w; });
+    if (!e) return;
+    $('#wdate').value = d;
+    var more = false;
+    WM.forEach(function (m) {
+      var el = $(m.k === 'w' ? '#wval' : '#wf-' + m.k);
+      if (el) el.value = hasV(e, m.k) ? String(e[m.k]).replace('.', ',') : '';
+      if (!m.basic && m.k !== 'w' && hasV(e, m.k)) more = true;
+    });
+    var det = $('#wmore'); if (det && more) det.open = true;
+    var f = $('#wval'); if (f && f.scrollIntoView) f.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   function calorieAdvice(T) {
     var p = S.profile, ws = S.weights, today = dateKey(new Date());
@@ -1245,23 +1349,43 @@ body.noscroll { overflow: hidden; }
     if (!S.profile) return h + '<section class="card"><h2>Primero tu perfil</h2><p>Necesito tus datos para calcular tus objetivos.</p><button class="btn" data-go="profile">Completar perfil</button></section>';
     var T = targets(S.profile), ws = S.weights, today = dateKey(new Date());
 
-    /* Peso */
-    h += '<section class="card"><h2 class="hi">' + chip('trend', 'prot') + 'Peso</h2>' +
-      '<div class="row"><div class="field"><label for="wval">Peso (kg)</label><input id="wval" type="text" inputmode="decimal" placeholder="Por ejemplo 80,4" autocomplete="off"></div>' +
-      '<div class="field"><label for="wdate">Día</label><input id="wdate" type="date" value="' + today + '" max="' + today + '"></div></div>' +
-      '<button class="btn" id="wsave">Guardar peso</button><p class="err" id="werr" role="alert"></p>';
+    /* Peso y composición corporal */
+    h += '<section class="card"><h2 class="hi">' + chip('trend', 'prot') + 'Peso y composición</h2>' +
+      '<p class="muted small">Pésate siempre en las mismas condiciones, por ejemplo por la mañana, en ayunas y tras ir al baño. Rellena solo lo que te dé tu báscula.</p>' +
+      '<div class="row"><div class="field"><label for="wdate">Día</label><input id="wdate" type="date" value="' + today + '" max="' + today + '"></div>' + wField(WM[0]) + '</div>' +
+      '<div class="row">' + WM.filter(function (m) { return m.basic; }).map(wField).join('') + '</div>' +
+      '<details class="inner" id="wmore"><summary>Más datos de la báscula</summary><div class="row" style="margin-top:8px">' +
+      WM.filter(function (m) { return m.k !== 'w' && !m.basic; }).map(wField).join('') + '</div></details>' +
+      '<div style="margin-top:12px"><button class="btn" id="wsave">Guardar</button></div><p class="err" id="werr" role="alert"></p></section>';
     if (ws.length) {
-      var last = ws[ws.length - 1], em = emaSeries(ws), tr = em[em.length - 1];
-      h += '<p style="margin-top:8px">Último registro: <b>' + nf(last.w, 1) + ' kg</b> el ' + fmtShort(last.d) + '. Peso de tendencia: <b>' + nf(tr, 1) + ' kg</b>.</p>';
+      h += '<section class="card"><h2 class="hi">' + chip('check', 'fib') + 'Tus últimos datos</h2>' + tilesHTML() + '</section>';
+      var avail = WM.filter(function (m) { return ws.some(function (w) { return hasV(w, m.k); }); });
+      if (!avail.some(function (m) { return m.k === metricSel; })) metricSel = 'w';
+      h += '<section class="card"><h2 class="hi">' + chip('trend', 'prot') + 'Evolución</h2><div class="chips" role="radiogroup" aria-label="Dato a mostrar">' +
+        avail.map(function (m) {
+          return '<button class="mchip' + (m.k === metricSel ? ' on' : '') + '" role="radio" aria-checked="' + (m.k === metricSel) + '" data-metric="' + m.k + '">' + m.s + '</button>';
+        }).join('') + '</div>' + metricChart(metricSel) +
+        '<p class="muted small">La línea marca la tendencia, que suaviza los días sueltos. Las básculas de bioimpedancia dan estimaciones: cambian con el agua, la comida y el ejercicio, y pueden fallar entre 3 y 5 puntos. Sirve más la tendencia que un dato suelto. Si medirte te genera ansiedad, con una o dos veces por semana basta.</p>';
+      var bfs = ws.filter(function (w) { return hasV(w, 'bf'); }).slice(-3);
+      if (bfs.length) {
+        var bfAvg = Math.round(bfs.reduce(function (a, w) { return a + w.bf; }, 0) / bfs.length * 10) / 10, pbf = S.profile.bf;
+        if (pbf) {
+          h += '<div class="advice">Tus objetivos se calculan con un ' + nf(pbf, 1) + ' % de grasa corporal (fórmula Katch-McArdle).<div class="btns" style="margin-top:10px">' +
+            '<button class="btn ghost" data-clearbf="1">Volver al cálculo estándar</button>' +
+            (bfAvg >= 5 && bfAvg <= 60 && Math.abs(pbf - bfAvg) >= 1.5 ? '<button class="btn" data-usebf="' + bfAvg + '">Actualizar a ' + nf(bfAvg, 1) + ' %</button>' : '') + '</div></div>';
+        } else if (bfAvg >= 5 && bfAvg <= 60) {
+          h += '<div class="advice">Tu báscula marca un ' + nf(bfAvg, 1) + ' % de grasa (media de tus últimos registros). Si te parece realista, puedes usarlo para calcular mejor tus calorías. Si la báscula se equivoca, el cálculo también.' +
+            '<div class="btns" style="margin-top:10px"><button class="btn ghost" data-usebf="' + bfAvg + '">Usar este dato</button></div></div>';
+        }
+      }
+      h += '<details class="inner"><summary>Historial</summary><ul class="results" style="margin-top:4px">' + ws.slice().reverse().slice(0, 30).map(function (w) {
+        return '<li class="rrow"><div class="res"><span class="rn">' + fmtShort(w.d) + '</span><span class="rm">' + entrySummary(w) + '</span></div>' +
+          '<button class="ib" data-wedit="' + w.d + '" aria-label="Editar el registro del ' + fmtShort(w.d) + '">' + ic('pencil', 18) + '</button>' +
+          '<button class="ib" data-wdel="' + w.d + '" aria-label="Quitar el registro del ' + fmtShort(w.d) + '">' + ic('x', 18) + '</button></li>';
+      }).join('') + '</ul></details></section>';
+    } else {
+      h += '<section class="card"><p class="muted">Guarda tu primer registro para ver aquí tus datos y su evolución.</p></section>';
     }
-    h += weightChart(ws) + '<p class="muted small">Pésate a la misma hora, por ejemplo por la mañana. Fíjate en la tendencia, no en un día suelto: el peso sube y baja por el agua y la sal.</p>';
-    if (ws.length) {
-      h += '<details class="inner"><summary>Historial de peso</summary><ul class="results" style="margin-top:4px">' + ws.slice().reverse().slice(0, 20).map(function (w) {
-        return '<li class="rrow"><div class="res"><span class="rn">' + nf(w.w, 1) + ' kg</span><span class="rm">' + fmtShort(w.d) + '</span></div>' +
-          '<button class="ib" data-wdel="' + w.d + '" aria-label="Quitar el peso del ' + fmtShort(w.d) + '">' + ic('x', 18) + '</button></li>';
-      }).join('') + '</ul></details>';
-    }
-    h += '</section>';
 
     /* Ajuste de calorías */
     var adv = calorieAdvice(T);
@@ -1314,14 +1438,27 @@ body.noscroll { overflow: hidden; }
     return h;
   }
   function saveWeight() {
-    var v = parseNum($('#wval').value), d = $('#wdate').value || dateKey(new Date()), err = $('#werr');
-    if (isNaN(v) || v < 30 || v > 300) { err.textContent = 'Escribe un peso entre 30 y 300 kg.'; return; }
+    var d = $('#wdate').value || dateKey(new Date()), err = $('#werr'), ex = null;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > dateKey(new Date())) { err.textContent = 'Elige un día que no sea futuro.'; return; }
-    v = Math.round(v * 10) / 10;
+    S.weights.forEach(function (w) { if (w.d === d) ex = w; });
+    var vals = {}, bad = null;
+    WM.forEach(function (m) {
+      if (bad) return;
+      var el = $(m.k === 'w' ? '#wval' : '#wf-' + m.k), raw = el ? String(el.value).trim() : '';
+      if (raw === '') return;
+      var x = parseNum(raw);
+      if (isNaN(x) || x < m.lo || x > m.hi) { bad = m.n + ' debe estar entre ' + nf(m.lo, m.d) + ' y ' + nf(m.hi, m.d) + ' ' + m.u + '.'; return; }
+      var f = Math.pow(10, m.d); vals[m.k] = Math.round(x * f) / f;
+    });
+    if (bad) { err.textContent = bad; return; }
+    if (!Object.keys(vals).length) { err.textContent = 'Escribe al menos un dato.'; return; }
+    if (!ex && vals.w === undefined) { err.textContent = 'Para un día nuevo escribe también el peso.'; return; }
+    var e = Object.assign({}, ex || { d: d }, vals);
+    if ((hasV(e, 'mu') && e.mu >= e.w) || (hasV(e, 'bo') && e.bo >= e.w)) { err.textContent = 'La masa muscular y la ósea no pueden superar el peso.'; return; }
     S.weights = S.weights.filter(function (w) { return w.d !== d; });
-    S.weights.push({ d: d, w: v });
+    S.weights.push(e);
     S.weights.sort(function (a, b) { return a.d < b.d ? -1 : 1; });
-    save(); toast('Peso guardado'); render();
+    save(); toast('Datos guardados'); render();
   }
 
   /* ---------- Comidas habituales ---------- */
@@ -1411,7 +1548,7 @@ body.noscroll { overflow: hidden; }
     });
     o.weights = (Array.isArray(o.weights) ? o.weights : []).filter(function (w) {
       return w && /^\d{4}-\d{2}-\d{2}$/.test(String(w.d)) && isFinite(w.w) && w.w > 20 && w.w < 400;
-    }).map(function (w) { return { d: String(w.d), w: Number(w.w) }; });
+    }).map(cleanW);
     o.adj = (o.adj && typeof o.adj === 'object' && isFinite(o.adj.kcal)) ? { kcal: Math.max(-400, Math.min(400, Number(o.adj.kcal))), date: String(o.adj.date || '') } : null;
     S = o; save(); load();
     toast('Datos restaurados');
@@ -1517,6 +1654,10 @@ body.noscroll { overflow: hidden; }
     if (ds.bk === 'pasteimp') return reviewImport($('#imptext').value);
     if (ds.bk === 'impok') return applyImport();
     if (ds.bk === 'impno') { pendingImport = null; $('#impstatus').innerHTML = ''; return; }
+    if (ds.metric) { metricSel = ds.metric; return render(); }
+    if (ds.usebf) { S.profile.bf = Number(ds.usebf); S.adj = null; save(); toast('Objetivos calculados con tu % de grasa'); return render(); }
+    if (ds.clearbf) { S.profile.bf = null; S.adj = null; save(); toast('Vuelves al cálculo estándar'); return render(); }
+    if (ds.wedit) return editWeightEntry(ds.wedit);
     if (ds.edit) return openEdit(ds.edit);
     if (el.id === 'esave') return saveEdit();
     if (ds.edel) { var eid = ds.edel; closePicker(); return removeItem(eid); }
